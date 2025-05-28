@@ -1,0 +1,324 @@
+---
+title: "Projek Analisis MANOVA dari data Adult"
+author: "Kelompok 7 Analisis Multivariat"
+date: "2025-05-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Pendahuluan
+### Analisis Multivariat (MANOVA) merupakan salah satu teknik statistik yang digunakan untuk menguji perbedaan rata-rata dari beberapa variabel dependen sekaligus berdasarkan satu atau lebih variabel independen. Dalam proyek ini, dilakukan analisis MANOVA terhadap data Adult dari UCI Machine Learning Repository untuk mengevaluasi apakah terdapat perbedaan signifikan pada dua variabel ekonomi, yaitu capital.gain dan capital.loss, berdasarkan tiga faktor independen: occupation, dan income.
+
+### Pendekatan ini penting karena memberikan pemahaman lebih menyeluruh mengenai hubungan antara variabel ekonomi dan kondisi demografis seseorang, serta bagaimana faktor pekerjaan dan pendapatan memengaruhi potensi keuntungan atau kerugian modal individu.
+
+# Import Library yang di butuhkan
+```{r}
+library(tidyverse)
+library(car)
+library(MVN)
+library(MASS)
+library(heplots)
+library(ggplot2)
+library(corrplot)
+library(psych)
+```
+# **1. PreProcessing**
+```{r}
+data <- read.csv("C:/Users/lenovo/OneDrive/Documents/SEMESTER 4/Analisis Multivariat/Projek Anmul/adult.csv", stringsAsFactors = FALSE)
+head(data)
+```
+#### Cek tipe data
+```{r}
+str(data)
+```
+```{r}
+summary(data)
+```
+#### Menghitung tanda "?" yang ada di data
+```{r}
+sapply(data, function(x) sum(x == "?"))
+```
+#### Mengubah tanda "?" menjadi nilai kosong
+```{r}
+data[data == "?"] <- NA
+summary(data)
+```
+
+#### Mengubah tipe data
+#### Mengubah variabel kategorikal menjadi factor
+```{r}
+data$workclass <- as.factor(data$workclass)
+data$education <- as.factor(data$education)
+data$marital.status <- as.factor(data$marital.status)
+data$occupation <- as.factor(data$occupation)
+data$relationship <- as.factor(data$relationship)
+data$race <- as.factor(data$race)
+data$sex <- as.factor(data$sex)
+data$native.country <- as.factor(data$native.country)
+data$income <- as.factor(data$income)
+```
+
+#### Mengubah variabel numerik menjadi numeric
+```{r}
+data$age <- as.numeric(data$age)
+data$fnlwgt <- as.numeric(data$fnlwgt)
+data$education.num <- as.numeric(data$education.num)
+data$capital.gain <- as.numeric(data$capital.gain)
+data$capital.loss <- as.numeric(data$capital.loss)
+data$hours.per.week <- as.numeric(data$hours.per.week)
+```
+
+#### Memeriksa struktur data setelah konversi
+```{r}
+str(data)
+```
+#### 
+
+#### Menangani missing values dengan metode imputasi
+#### Untuk variabel kategorikal, gunakan modus
+```{r}
+get_mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+```
+
+#### Imputasi untuk variabel kategorikal
+```{r}
+for(col in c("workclass", "occupation", "native.country")) {
+  if(sum(is.na(data[[col]])) > 0) {
+    mode_val <- get_mode(data[[col]][!is.na(data[[col]])])
+    data[[col]][is.na(data[[col]])] <- mode_val
+  }
+}
+```
+
+#### Imputasi untuk variabel numerik (menggunakan median)
+```{r}
+for(col in c("age", "fnlwgt", "education.num", "capital.gain", "capital.loss", "hours.per.week")) {
+  if(sum(is.na(data[[col]])) > 0) {
+    median_val <- median(data[[col]], na.rm = TRUE)
+    data[[col]][is.na(data[[col]])] <- median_val
+  }
+}
+```
+
+#### Analisis deskriptif berdasarkan income
+```{r}
+numeric_vars <- data[, c("age", "fnlwgt", "education.num", "capital.gain", "capital.loss", "hours.per.week")]
+describeBy(numeric_vars, group = data$income)
+```
+##### Analisis statistik deskriptif dilakukan untuk melihat distribusi berdasarkan kelompok variabel pendapatan, numerik yaitu <=50K dan >50K. Variabel yang  dianalisis
+##### Untuk Kelomppok Kelompok pendapatan <=50k:
+##### 1. Jumlah responden: 24.720 orang 
+##### 2. Rata-rata usia: 36.78 tahun dengan standar deviasi 14.02 
+##### 3. Rata-rata jam kerja per minggu: 38.84 jam 
+##### 4. Nilai capital.gain dan capital.loss sangat rendah, dengan median = 0 dan skewness tinggi (indikasi data tidak normal) sum(is.na(data))
+##### 5. Rata-rata tingkat pendidikan (education.num): 9.60 (mendekati pendidikan SMA) 
+##### Untuk Kelompok Pendapatan >50K:
+##### 1. Jumlah responden: 7.841 orang 
+##### 2. Rata-rata usia: 44.25 tahun — lebih tua dibanding kelompok <=50KRata-rata jam kerja per minggu: 45.47 jam 
+##### 3. Rata-rata capital.gain: 4006.14, dengan maksimum mencapai 99999 (distribusi sangat miring ke kanan / skewed) 
+##### 4. Rata-rata tingkat pendidikan (education.num): 11.61, lebih tinggi dari kelompok <=50K 
+
+#### Menyimpan kedalam file csv
+```{r}
+write.csv(data, "C:/Users/lenovo/OneDrive/Documents/SEMESTER 4/Analisis Multivariat/Projek Anmul/adult after preprocessing.csv", row.names = FALSE)
+```
+
+# **2. Seleksi Variabel**
+### - variabel Dependen: capital.loss, capital.gain
+### - Variabel Independen: occupation, income
+```{r}
+data2 <- read.csv("C:/Users/lenovo/OneDrive/Documents/SEMESTER 4/Analisis Multivariat/Projek Anmul/adult after preprocessing.csv")
+```
+
+#### Ambil 4000 data pertama
+```{r}
+filtered <- data2[1:4000, ]
+```
+
+#### Mengecek Korelasi antar variabel numerik
+```{r}
+numeric_vars <- filtered[, c("age", "fnlwgt", "education.num", "capital.gain", "capital.loss", "hours.per.week")]
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+print(cor_matrix)
+
+corrplot(cor_matrix, method = "circle", type = "upper", 
+         tl.col = "black", tl.srt = 45, addCoef.col = "black")
+```
+
+#### Transformasi log agar distribusi lebih normal
+```{r}
+filtered <- filtered %>%
+  mutate(
+    log_capital_gain = log(capital.gain + 1),
+    log_capital_loss = log(capital.loss + 1)
+  )
+```
+
+#### Memastikan variabel kategorik menjadi faktor
+```{r}
+filtered$education <- as.factor(filtered$education)
+filtered$occupation <- as.factor(filtered$occupation)
+filtered$sex <- as.factor(filtered$sex)
+filtered$income <- as.factor(filtered$income)
+
+analysis_data <- filtered
+```
+
+# **3. Uji Asumsi**
+
+## **3.1 Uji Normalitas**
+#### Uji Normalitas Multivariat
+```{r}
+mvn_result <- mvn(
+  data = analysis_data[, c("log_capital_gain", "log_capital_loss")],
+  multivariatePlot = "qq"
+)
+print(mvn_result$multivariateNormality)
+```
+##### Karena nilai p = 0 (di bawah 0.05), maka hasil uji ini menolak bahwa data mengikuti distribusi normal multivariat. Dengan kata lain, data tidak berdistribusi normal secara multivariat,
+
+#### **Uji Mardia**
+```{r}
+mardia_result <- mvn(
+  data = filtered[, c("log_capital_gain", "log_capital_loss")],
+  mvnTest = "mardia"
+)
+print(mardia_result$multivariateNormality)
+```
+##### nilai statistik skewness sebesar 2236.49 dan kurtosis sebesar 10.91, keduanya disertai p-value = 0, yang berarti signifikan secara statistik. Dengan demikian, asumsi bahwa data berdistribusi normal multivariat ditolak.
+
+#### **Shapiro-Wilk univariat**
+```{r}
+shapiro.test(filtered$log_capital_gain)
+shapiro.test(filtered$log_capital_loss)
+```
+##### Berdasarkan uji Shapiro-Wilk, kedua variabel log_capital_gain dan log_capital_loss tidak memenuhi asumsi normalitas univariat.
+##### disini kita sudah menggunakan beberapa metode transformasi atau standarisasi, masih data tidak memenuhi normalitas
+
+## **3.2 Uji Homogenitas Matriks Varians-Kovarians**
+```{r}
+boxm_result <- boxM(
+  cbind(log_capital_gain, log_capital_loss) ~ sex,
+  data = filtered
+)
+print(boxm_result)
+```
+##### Hasil uji Box’s M menunjukkan bahwa asumsi homogenitas matriks varians-kovarians terpenuhi. Dengan nilai p = 0.6755 (> 0.05), dapat disimpulkan bahwa distribusi dari variabel log_capital_gain dan log_capital_loss memiliki matriks varians-kovarians yang serupa antar kelompok jenis kelamin (sex)
+
+## **3.3 Uji Multikolinearitas dan Singularitas**
+```{r}
+correlation <- cor(filtered[, c("log_capital_gain", "log_capital_loss")])
+print(correlation)
+```
+##### Hasil analisis korelasi menunjukkan bahwa terjadi multikolinearitas yang sangat tinggi antara log_capital_gain dan log_capital_loss (r = -0.986). Kondisi ini berpotensi menyebabkan singularitas matriks dan mempengaruhi validitas analisis multivariat yang digunakan. 
+
+
+## **3.4 Uji Outlier**
+#### **Univariat Outlier**
+```{r}
+z_scores <- scale(analysis_data[, c("log_capital_gain", "log_capital_loss")])
+outliers_uni <- which(apply(abs(z_scores) > 3, 1, any))
+cat("Jumlah Outlier Univariat:", length(outliers_uni), "\n")
+```
+##### Tidak ditemukan outlier pada variabel log_capital_gain dan log_capital_loss secara individu. 
+
+#### **Multivariat Outlier**
+```{r}
+md <- mahalanobis(analysis_data[, c("log_capital_gain", "log_capital_loss")],
+                  colMeans(analysis_data[, c("log_capital_gain", "log_capital_loss")]),
+                  cov(analysis_data[, c("log_capital_gain", "log_capital_loss")]))
+cutoff <- qchisq(0.975, df = 2)
+outliers_multi <- which(md > cutoff)
+cat("Jumlah Outlier Multivariat:", length(outliers_multi), "\n")
+```
+##### Ada 167 observasi yang terdeteksi sebagai outlier jika kedua variabel (log_capital_gain dan log_capital_loss) dipertimbangkan secara bersamaan. 
+
+#### **Boxplot Visualisasi Outlier**
+```{r}
+boxplot(analysis_data[, c("log_capital_gain", "log_capital_loss")],
+        main = "Boxplot Log Capital Gain dan Loss")
+```
+##### Tidak tampak titik-titik outlier (biasanya ditandai dengan titik di luar whisker), artinya secara univariat data tidak menunjukkan outlier mencolok
+
+## **3.5 Uji Linearitas**
+```{r}
+ggplot(analysis_data, aes(x = log_capital_gain, y = log_capital_loss, color = income)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~income) +
+  labs(title = "Scatterplot Log Capital Gain vs Loss by Income")
+```
+##### Scatterplot menunjukkan bahwa tidak ada hubungan linear yang jelas antara log_capital_gain dan log_capital_loss, baik pada kelompok pendapatan <=50K maupun >50K. Titik-titik tersebar tanpa pola yang konsisten, sehingga asumsi linearitas tidak terpenuhi secara visual.
+
+# **3.6 Uji deviasi dari linearitas**
+```{r}
+fit_linear <- lm(log_capital_loss ~ log_capital_gain + income, data = analysis_data)
+fit_dev <- lm(log_capital_loss ~ poly(log_capital_gain, 2) + income, data = analysis_data)
+anova(fit_linear, fit_dev)
+```
+##### Model dengan komponen polinomial orde 2 untuk log_capital_gain (model 2) jauh lebih baik daripada model linear biasa (model 1). Ini menunjukkan bahwa hubungan antara log_capital_loss dan log_capital_gain tidak linier, dan model non-linear memberikan penjelasan yang lebih baik terhadap data
+
+
+## **3.7 Uji Independensi Observasi**
+#### Uji Independensi: Durbin-Watson & Plot Residual
+```{r}
+res_model <- lm(cbind(log_capital_loss, log_capital_gain) ~ occupation + income + age, data = analysis_data)
+residuals <- residuals(res_model)
+plot(residuals[,1], type = "l", main = "Residual Plot Log Capital Loss")
+plot(residuals[,2], type = "l", main = "Residual Plot Log Capital Gain")
+
+durbinWatsonTest(lm(log_capital_loss ~ occupation + income + age, data = analysis_data))
+durbinWatsonTest(lm(log_capital_gain ~ occupation + income + age, data = analysis_data))
+```
+##### Dengan p-value = 0, maka kita menolak H₀ (yang menyatakan tidak ada autokorelasi), sehingga terdapat autokorelasi signifikan secara statistik. 
+
+# **4. Analisis Manova**
+
+#### Pastikan variabel kategorikal difaktorkan
+```{r}
+analysis_data$occupation <- as.factor(analysis_data$occupation)
+analysis_data$income <- as.factor(analysis_data$income)
+```
+
+#### Model MANOVA
+```{r}
+manova_model <- manova(cbind(log_capital_gain, log_capital_loss) ~ occupation + income, data = analysis_data)
+
+# Hasil uji MANOVA dengan berbagai statistik
+summary(manova_model, test = "Pillai")
+summary(manova_model, test = "Wilks")
+summary(manova_model, test = "Hotelling-Lawley")
+summary(manova_model, test = "Roy")
+```
+##### Analisis MANOVA dilakukan untuk mengetahui pengaruh variabel independen occupation dan income terhadap dua variabel dependen, yaitu log_capital_gain dan log_capital_loss
+##### Hasil uji multivariat dengan empat statistik berbeda yaitu Pillai’s Trace, Wilks’ Lambda, Hotelling Lawley Trace, dan Roy’s Largest Root menunjukkan bahwa kedua variabel independen (occupation dan income) memiliki pengaruh yang signifikan terhadap kombinasi variabel dependen.
+
+#### **Analisis dari hasil MANOVA**
+```{r}
+summary.aov(manova_model)
+```
+##### income berpengaruh signifikan terhadap kedua variabel: log_capital_gain (p < 2.2e-16) dan log_capital_loss (p < 2e-16).
+
+##### occupation hanya berpengaruh signifikan terhadap log_capital_gain (p = 0.00068), namun tidak signifikan terhadap log_capital_loss (p = 0.39).
+##### Artinya, tingkat pendapatan merupakan faktor yang konsisten memengaruhi baik keuntungan maupun kerugian modal, sedangkan jenis pekerjaan hanya berpengaruh terhadap keuntungan modal.
+
+
+#### **Boxplot Visualisasi**
+```{r}
+par(mfrow = c(2, 2))
+
+boxplot(log_capital_gain ~ occupation, data = analysis_data, main = "Log Capital Gain by Occupation")
+boxplot(log_capital_loss ~ occupation, data = analysis_data, main = "Log Capital Loss by Occupation")
+boxplot(log_capital_gain ~ income, data = analysis_data, main = "Log Capital Gain by Income")
+boxplot(log_capital_loss ~ income, data = analysis_data, main = "Log Capital Loss by Income")
+
+par(mfrow = c(1, 1))
+```
+##### Visualisasi juga menunjukkan bahwa kategori pekerjaan tertentu seperti Craft-repair dan Priv-house-serv memiliki distribusi log_capital_gain yang mencolok dibandingkan lainnya. Secara keseluruhan, hasil analisis menunjukkan bahwa faktor pendapatan memiliki pengaruh yang lebih konsisten dan signifikan terhadap perubahan log capital gain maupun loss dibandingkan jenis pekerjaan. 
+
+
+[Klik di sini untuk melihat hasil di RPubs](https://rpubs.com/AkhmadDany234/1314351)
